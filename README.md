@@ -16,9 +16,12 @@ Commands:
 - `/noctalia-sync` — Manually re-sync the theme
 - `/noctalia-off` — Revert to the default theme
 
-### web-search
+### web-tools
 
-Web search tool backed by a local [SearXNG](https://github.com/searxng/searxng) instance. Returns URLs, titles, and snippets. Optionally fetches result pages and converts them to markdown for full content.
+Two tools backed by a local [SearXNG](https://github.com/searxng/searxng) instance:
+
+- **web_search** — Search the web. Returns URLs, titles, and snippets.
+- **web_fetch** — Fetch a URL and convert it to markdown. Use this to read pages found via `web_search`.
 
 Set `SEARX_URL` to override the default `http://127.0.0.1:8081/search`.
 
