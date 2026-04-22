@@ -23,6 +23,8 @@ Two tools backed by a local [SearXNG](https://github.com/searxng/searxng) instan
 - **web_search** — Search the web. Returns URLs, titles, and snippets.
 - **web_fetch** — Fetch a URL and convert it to markdown. Use this to read pages found via `web_search`.
 
+**Prerequisite:** These tools require a SearXNG instance running locally. [SearXNG](https://github.com/searxng/searxng) is a free internet metasearch engine that aggregates results from many search engines. The quickest way to get started is the [Docker installation](https://docs.searxng.org/admin/installation-docker.html) — just pull the image and run it. For other options, see the full [SearXNG installation guide](https://docs.searxng.org/admin/installation.html).
+
 Set `SEARX_URL` to override the default `http://127.0.0.1:8081/search`.
 
 ## Install
