@@ -1,6 +1,6 @@
 # pi-extensions
 
-Personal [pi coding agent](https://github.com/mariozechner/pi-coding-agent) extensions.
+Personal [pi coding agent](https://github.com/earendil-works/pi-mono) extensions.
 
 ## Extensions
 

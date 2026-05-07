@@ -6,7 +6,7 @@
  * static list if the API call fails or is too slow.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // --- Config ---
 const ZAI_API_BASE = "https://api.z.ai/api/paas/v4";
