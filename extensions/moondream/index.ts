@@ -1,8 +1,8 @@
 /**
  * Moondream Image Read Extension
  *
- * Provides an `image_read` tool that uses the Moondream vision API
- * for visual question answering, object detection, pointing,
+ * Provides an `image_read` tool using the official Moondream Node.js
+ * client for visual question answering, object detection, pointing,
  * captioning, and segmentation.
  *
  * Set MOONDREAM_API_KEY in your environment or register it
@@ -11,25 +11,20 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import {
+  vl,
+  type CaptionOutput,
+  type QueryOutput,
+  type DetectOutput,
+  type PointOutput,
+  type SegmentOutput,
+} from "moondream";
 import fs from "node:fs";
 import path from "node:path";
 
-// --- Config ---
-const API_BASE = "https://api.moondream.ai/v1";
-const TIMEOUT_MS = 60_000;
-
 // --- Helpers ---
 
-const MIME_TYPES: Record<string, string> = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".bmp": "image/bmp",
-};
-
-function imageToDataUrl(imagePath: string, cwd: string): string {
+function readImage(imagePath: string, cwd: string): Buffer {
   const resolved = path.isAbsolute(imagePath)
     ? imagePath
     : path.resolve(cwd, imagePath);
@@ -38,23 +33,12 @@ function imageToDataUrl(imagePath: string, cwd: string): string {
     throw new Error(`Image not found: ${resolved}`);
   }
 
-  const ext = path.extname(resolved).toLowerCase();
-  const mime = MIME_TYPES[ext];
-  if (!mime) {
-    throw new Error(
-      `Unsupported image format: ${ext}. Supported: ${Object.keys(MIME_TYPES).join(", ")}`,
-    );
-  }
-
-  const buffer = fs.readFileSync(resolved);
-  const base64 = buffer.toString("base64");
-  return `data:${mime};base64,${base64}`;
+  return fs.readFileSync(resolved);
 }
 
 async function getApiKey(
   ctx: ExtensionContext,
 ): Promise<string | undefined> {
-  // Try pi's credential system first, then env var
   try {
     const key = await ctx.modelRegistry.getApiKeyForProvider("moondream");
     if (key) return key;
@@ -64,85 +48,49 @@ async function getApiKey(
   return process.env.MOONDREAM_API_KEY;
 }
 
-async function callMoondream(
-  endpoint: string,
-  body: Record<string, unknown>,
-  apiKey: string,
-  signal?: AbortSignal,
-): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  // Wire up external signal if provided
-  if (signal) {
-    signal.addEventListener("abort", () => controller.abort(), {
-      once: true,
-    });
-  }
-
-  try {
-    const response = await fetch(`${API_BASE}/${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Moondream-Auth": apiKey,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "Unknown error");
-      throw new Error(
-        `Moondream API error ${response.status}: ${errorText}`,
-      );
-    }
-
-    return response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
+function formatCaption(data: CaptionOutput): string {
+  if (typeof data.caption === "string") return data.caption;
+  return JSON.stringify(data);
 }
 
-// Format results for each mode
-function formatQueryResult(data: any): string {
-  return data.answer ?? JSON.stringify(data);
+function formatQuery(data: QueryOutput): string {
+  const parts: string[] = [];
+  if (typeof data.answer === "string") {
+    parts.push(data.answer);
+  } else {
+    parts.push(JSON.stringify(data.answer));
+  }
+  if (data.reasoning) {
+    parts.push(`\n--- Reasoning ---\n${data.reasoning.text}`);
+  }
+  return parts.join("\n");
 }
 
-function formatDetectResult(data: any): string {
-  const objects: any[] = data.objects ?? [];
-  if (objects.length === 0) return "No objects detected.";
-  return objects
+function formatDetect(data: DetectOutput): string {
+  if (data.objects.length === 0) return "No objects detected.";
+  return data.objects
     .map(
-      (obj: any, i: number) =>
-        `${i + 1}. bbox=[${obj.x_min?.toFixed(3)}, ${obj.y_min?.toFixed(3)}, ${obj.x_max?.toFixed(3)}, ${obj.y_max?.toFixed(3)}]`,
+      (obj, i) =>
+        `${i + 1}. bbox=[${obj.x_min.toFixed(3)}, ${obj.y_min.toFixed(3)}, ${obj.x_max.toFixed(3)}, ${obj.y_max.toFixed(3)}]`,
     )
     .join("\n");
 }
 
-function formatPointResult(data: any): string {
-  const points: any[] = data.points ?? [];
-  if (points.length === 0) return "No points found.";
-  return points
-    .map(
-      (p: any, i: number) =>
-        `${i + 1}. (${p.x?.toFixed(3)}, ${p.y?.toFixed(3)})`,
-    )
+function formatPoint(data: PointOutput): string {
+  if (data.points.length === 0) return "No points found.";
+  return data.points
+    .map((p, i) => `${i + 1}. (${p.x.toFixed(3)}, ${p.y.toFixed(3)})`)
     .join("\n");
 }
 
-function formatCaptionResult(data: any): string {
-  return data.caption ?? JSON.stringify(data);
-}
-
-function formatSegmentResult(data: any): string {
+function formatSegment(data: SegmentOutput): string {
   const parts: string[] = [];
   if (data.path) {
     parts.push(`SVG Path: \`${data.path}\``);
   }
   if (data.bbox) {
     parts.push(
-      `BBox: [${data.bbox.x_min?.toFixed(3)}, ${data.bbox.y_min?.toFixed(3)}, ${data.bbox.x_max?.toFixed(3)}, ${data.bbox.y_max?.toFixed(3)}]`,
+      `BBox: [${data.bbox.x_min.toFixed(3)}, ${data.bbox.y_min.toFixed(3)}, ${data.bbox.x_max.toFixed(3)}, ${data.bbox.y_max.toFixed(3)}]`,
     );
   }
   return parts.join("\n") || JSON.stringify(data);
@@ -166,13 +114,22 @@ const ImageReadSchema = Type.Object({
   ),
   object: Type.Optional(
     Type.String({
-      description: "Object to detect/point/segment (for mode=detect/point/segment)",
+      description:
+        "Object to detect/point/segment (for mode=detect/point/segment)",
     }),
   ),
   length: Type.Optional(
     Type.String({
-      description: 'Caption length: "short", "normal", or "long" (for mode=caption)',
+      description:
+        'Caption length: "short", "normal", or "long" (for mode=caption)',
       default: "normal",
+    }),
+  ),
+  reasoning: Type.Optional(
+    Type.Boolean({
+      description:
+        "Enable reasoning for more accurate answers at the cost of latency (for mode=query)",
+      default: false,
     }),
   ),
 });
@@ -187,14 +144,14 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Ask questions or analyze images with Moondream vision",
     promptGuidelines: [
       "Use image_read with mode=caption to describe what's in an image.",
-      "Use image_read with mode=query to ask specific questions about image content.",
+      "Use image_read with mode=query to ask specific questions about image content. Enable reasoning=true for complex or nuanced questions.",
       "Use image_read with mode=detect to locate objects with bounding boxes.",
       "Use image_read with mode=point to get center coordinates of objects.",
       "Use image_read with mode=segment to get SVG path masks for objects.",
     ],
     parameters: ImageReadSchema,
 
-    async execute(toolCallId, params, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // Get API key
       const apiKey = await getApiKey(ctx);
       if (!apiKey) {
@@ -209,100 +166,145 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      // Read and encode image
-      let imageUrl: string;
+      // Initialize client
+      const model = new vl({ apiKey });
+
+      // Read image
+      let image: Buffer;
       try {
-        imageUrl = imageToDataUrl(params.image_path, ctx.cwd);
+        image = readImage(params.image_path, ctx.cwd);
       } catch (err: any) {
         return {
-          content: [{ type: "text", text: `Error reading image: ${err.message}` }],
+          content: [
+            { type: "text", text: `Error reading image: ${err.message}` },
+          ],
           isError: true,
         };
       }
 
-      // Build request based on mode
+      // Dispatch by mode
       const mode = params.mode ?? "caption";
-      let endpoint: string;
-      let body: Record<string, unknown>;
 
-      switch (mode) {
-        case "query": {
-          if (!params.question) {
-            return {
-              content: [
-                { type: "text", text: "question is required for mode=query" },
-              ],
-              isError: true,
-            };
-          }
-          endpoint = "query";
-          body = { image_url: imageUrl, question: params.question };
-          break;
-        }
-        case "detect": {
-          if (!params.object) {
-            return {
-              content: [
-                { type: "text", text: "object is required for mode=detect" },
-              ],
-              isError: true,
-            };
-          }
-          endpoint = "detect";
-          body = { image_url: imageUrl, object: params.object };
-          break;
-        }
-        case "point": {
-          if (!params.object) {
-            return {
-              content: [
-                { type: "text", text: "object is required for mode=point" },
-              ],
-              isError: true,
-            };
-          }
-          endpoint = "point";
-          body = { image_url: imageUrl, object: params.object };
-          break;
-        }
-        case "caption": {
-          endpoint = "caption";
-          body = {
-            image_url: imageUrl,
-            length: params.length ?? "normal",
-            stream: false,
-          };
-          break;
-        }
-        case "segment": {
-          if (!params.object) {
-            return {
-              content: [
-                { type: "text", text: "object is required for mode=segment" },
-              ],
-              isError: true,
-            };
-          }
-          endpoint = "segment";
-          body = { image_url: imageUrl, object: params.object };
-          break;
-        }
-        default:
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Unknown mode: ${mode}. Valid modes: query, detect, point, caption, segment`,
-              },
-            ],
-            isError: true,
-          };
-      }
-
-      // Call API
-      let data: any;
       try {
-        data = await callMoondream(endpoint, body, apiKey, signal);
+        switch (mode) {
+          case "caption": {
+            const result = await model.caption({
+              image,
+              length: (params.length as "short" | "normal" | "long") ?? "normal",
+            });
+            return {
+              content: [{ type: "text", text: formatCaption(result) }],
+              details: { mode, path: params.image_path, length: params.length },
+            };
+          }
+
+          case "query": {
+            if (!params.question) {
+              return {
+                content: [
+                  { type: "text", text: "question is required for mode=query" },
+                ],
+                isError: true,
+              };
+            }
+            const result = await model.query({
+              image,
+              question: params.question,
+              reasoning: params.reasoning ?? false,
+            });
+            return {
+              content: [{ type: "text", text: formatQuery(result) }],
+              details: {
+                mode,
+                path: params.image_path,
+                question: params.question,
+                reasoning: params.reasoning ?? false,
+              },
+            };
+          }
+
+          case "detect": {
+            if (!params.object) {
+              return {
+                content: [
+                  { type: "text", text: "object is required for mode=detect" },
+                ],
+                isError: true,
+              };
+            }
+            const result = await model.detect({
+              image,
+              object: params.object,
+            });
+            return {
+              content: [{ type: "text", text: formatDetect(result) }],
+              details: {
+                mode,
+                path: params.image_path,
+                object: params.object,
+                count: result.objects.length,
+              },
+            };
+          }
+
+          case "point": {
+            if (!params.object) {
+              return {
+                content: [
+                  { type: "text", text: "object is required for mode=point" },
+                ],
+                isError: true,
+              };
+            }
+            const result = await model.point({
+              image,
+              object: params.object,
+            });
+            return {
+              content: [{ type: "text", text: formatPoint(result) }],
+              details: {
+                mode,
+                path: params.image_path,
+                object: params.object,
+                count: result.points.length,
+              },
+            };
+          }
+
+          case "segment": {
+            if (!params.object) {
+              return {
+                content: [
+                  { type: "text", text: "object is required for mode=segment" },
+                ],
+                isError: true,
+              };
+            }
+            const result = (await model.segment({
+              image,
+              object: params.object,
+            })) as SegmentOutput;
+            return {
+              content: [{ type: "text", text: formatSegment(result) }],
+              details: {
+                mode,
+                path: params.image_path,
+                object: params.object,
+              },
+            };
+          }
+
+          default:
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Unknown mode: ${mode}. Valid modes: query, detect, point, caption, segment`,
+                },
+              ],
+              isError: true,
+            };
+        }
       } catch (err: any) {
         return {
           content: [
@@ -312,41 +314,9 @@ export default function (pi: ExtensionAPI) {
             },
           ],
           isError: true,
-          details: { endpoint, mode },
+          details: { mode, path: params.image_path },
         };
       }
-
-      // Format result
-      let result: string;
-      switch (mode) {
-        case "query":
-          result = formatQueryResult(data);
-          break;
-        case "detect":
-          result = formatDetectResult(data);
-          break;
-        case "point":
-          result = formatPointResult(data);
-          break;
-        case "caption":
-          result = formatCaptionResult(data);
-          break;
-        case "segment":
-          result = formatSegmentResult(data);
-          break;
-        default:
-          result = JSON.stringify(data, null, 2);
-      }
-
-      return {
-        content: [{ type: "text", text: result }],
-        details: {
-          mode,
-          endpoint,
-          path: params.image_path,
-          ...data,
-        },
-      };
     },
   });
 }
